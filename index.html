@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>임베드 마이크 테스트</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1f2328;
+    --muted: #656d76;
+    --line: #d8dee4;
+    --card: #f6f8fa;
+    --ok: #1a7f37;
+    --ok-bg: #dafbe1;
+    --bad: #cf222e;
+    --bad-bg: #ffebe9;
+    --warn: #9a6700;
+    --warn-bg: #fff8c5;
+    --accent: #2f6feb;
+    --accent-fg: #ffffff;
+    --meter: #2f6feb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #191919;
+      --fg: #e6e6e6;
+      --muted: #9b9b9b;
+      --line: #373737;
+      --card: #232323;
+      --ok: #4ac26b;
+      --ok-bg: #12261a;
+      --bad: #ff7b72;
+      --bad-bg: #2d1414;
+      --warn: #d4a72c;
+      --warn-bg: #2b2310;
+      --accent: #4c8dff;
+      --accent-fg: #0b0b0b;
+      --meter: #4c8dff;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif;
+    padding: 16px;
+  }
+  main { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 14px; font-size: 13px; }
+  .verdict {
+    border-radius: 8px; padding: 12px 14px; margin-bottom: 14px;
+    font-weight: 600; background: var(--card); border: 1px solid var(--line);
+  }
+  .verdict.ok { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+  .verdict.bad { background: var(--bad-bg); color: var(--bad); border-color: transparent; }
+  .verdict.warn { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+  .verdict small { display: block; font-weight: 400; margin-top: 4px; color: var(--fg); opacity: .85; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  button, .btn {
+    font: inherit; font-weight: 600; cursor: pointer;
+    border-radius: 6px; padding: 8px 12px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); text-decoration: none;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
+  button:disabled { opacity: .55; cursor: default; }
+  .meter { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; margin: 4px 0 12px; display: none; }
+  .meter > div { height: 100%; width: 0; background: var(--meter); transition: width .08s linear; }
+  audio { width: 100%; margin-bottom: 12px; display: none; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; width: 38%; }
+  td { word-break: break-all; }
+  .ok-t { color: var(--ok); } .bad-t { color: var(--bad); } .muted-t { color: var(--muted); }
+  details { margin-bottom: 12px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  textarea {
+    width: 100%; min-height: 120px; font: 12px/1.5 ui-monospace, Consolas, monospace;
+    background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px;
+  }
+  .note { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🎙 임베드 마이크 테스트</h1>
+  <p class="sub">노션 안에서 이 화면이 마이크를 쓸 수 있는지 확인해요. 녹음은 이 기기 안에서만 재생되고 어디로도 전송되지 않아요.</p>
+
+  <div id="verdict" class="verdict">아직 테스트 전이에요. 아래 [마이크 테스트]를 눌러주세요.</div>
+
+  <div class="actions">
+    <button id="micBtn" class="primary">마이크 테스트 (5초 녹음)</button>
+    <button id="wakeBtn">화면 꺼짐 방지 테스트</button>
+    <a id="newTab" class="btn" target="_blank" rel="noopener">새 탭에서 열기</a>
+  </div>
+
+  <div id="meter" class="meter"><div></div></div>
+  <audio id="player" controls></audio>
+
+  <table id="envTable"><tbody></tbody></table>
+
+  <details>
+    <summary>결과 전체 보기 · 복사</summary>
+    <textarea id="report" readonly></textarea>
+    <div class="actions" style="margin-top:8px">
+      <button id="copyBtn">결과 복사</button>
+    </div>
+  </details>
+  <p class="note">테스트한 곳(데스크톱 앱 / 웹 브라우저 / 모바일 앱)마다 결과를 알려주세요.</p>
+</main>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var results = { mic: '테스트 전', wakeLock: '테스트 전' };
+
+  function inIframe() {
+    try { return window.self !== window.top; } catch (e) { return true; }
+  }
+
+  function policyAllows(feature) {
+    try {
+      var p = document.permissionsPolicy || document.featurePolicy;
+      if (p && typeof p.allowsFeature === 'function') return p.allowsFeature(feature);
+    } catch (e) {}
+    return null;
+  }
+
+  function ancestors() {
+    try {
+      if (location.ancestorOrigins && location.ancestorOrigins.length) {
+        return Array.prototype.slice.call(location.ancestorOrigins).join(' → ');
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  function guessEnv() {
+    var ua = navigator.userAgent;
+    var mobile = /iPhone|iPad|iPod|Android/i.test(ua);
+    if (/Electron/i.test(ua) && /Notion/i.test(ua)) return '노션 데스크톱 앱';
+    if (/Notion/i.test(ua) && mobile) return '노션 모바일 앱';
+    if (mobile) return '모바일 (노션 앱 또는 브라우저)';
+    return '웹 브라우저';
+  }
+
+  function recorderTypes() {
+    if (typeof MediaRecorder === 'undefined') return null;
+    var types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+    return types.filter(function (t) {
+      try { return MediaRecorder.isTypeSupported(t); } catch (e) { return false; }
+    });
+  }
+
+  function fmtBool(v) {
+    if (v === true) return '<span class="ok-t">허용</span>';
+    if (v === false) return '<span class="bad-t">차단</span>';
+    return '<span class="muted-t">확인 불가 (이 브라우저는 지원 안 함)</span>';
+  }
+
+  var env = {};
+
+  function collectEnv() {
+    var types = recorderTypes();
+    env = {
+      '추정 환경': guessEnv(),
+      '임베드 안에서 열림': inIframe() ? '예' : '아니요 (단독 페이지)',
+      '부모 페이지 출처': ancestors() || (document.referrer ? document.referrer + ' (referrer)' : '확인 불가'),
+      '보안 연결(HTTPS)': window.isSecureContext ? '예' : '아니요',
+      '마이크 API 제공': (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) ? '예' : '아니요',
+      '권한 정책: 마이크': policyAllows('microphone'),
+      '권한 정책: 화면 꺼짐 방지': policyAllows('screen-wake-lock'),
+      '마이크 권한 상태': '확인 중…',
+      '녹음 형식 지원': types === null ? 'MediaRecorder 없음' : (types.length ? types.join(', ') : '지원 형식 없음'),
+      '마이크 테스트': results.mic,
+      '화면 꺼짐 방지 테스트': results.wakeLock,
+      'User-Agent': navigator.userAgent
+    };
+    render();
+    if (navigator.permissions && navigator.permissions.query) {
+      navigator.permissions.query({ name: 'microphone' }).then(function (s) {
+        env['마이크 권한 상태'] = s.state;
+        render();
+      }).catch(function () {
+        env['마이크 권한 상태'] = '확인 불가';
+        render();
+      });
+    } else {
+      env['마이크 권한 상태'] = '확인 불가';
+    }
+  }
+
+  function render() {
+    env['마이크 테스트'] = results.mic;
+    env['화면 꺼짐 방지 테스트'] = results.wakeLock;
+    var tbody = $('envTable').tBodies[0];
+    var rows = '';
+    var lines = [];
+    Object.keys(env).forEach(function (k) {
+      var v = env[k];
+      var shown = (v === true || v === false || v === null) ? fmtBool(v) : escapeHtml(String(v));
+      if (k !== 'User-Agent') rows += '<tr><th>' + k + '</th><td>' + shown + '</td></tr>';
+      var plain = v === true ? '허용' : v === false ? '차단' : v === null ? '확인 불가' : String(v);
+      lines.push(k + ': ' + plain);
+    });
+    tbody.innerHTML = rows;
+    $('report').value = '[임베드 마이크 테스트 결과]\n' + lines.join('\n');
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function setVerdict(kind, text, detail) {
+    var el = $('verdict');
+    el.className = 'verdict ' + kind;
+    el.innerHTML = escapeHtml(text) + (detail ? '<small>' + escapeHtml(detail) + '</small>' : '');
+  }
+
+  function explainError(err) {
+    var name = (err && err.name) || 'Error';
+    var policy = policyAllows('microphone');
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+      if (policy === false) return ['bad', '❌ 노션이 임베드에 마이크 권한을 주지 않아요', '권한 정책에서 마이크가 차단돼 있어요. 권한 요청 창이 뜨지 않고 바로 거부돼요.'];
+      if (inIframe()) return ['bad', '❌ 마이크 사용이 거부됐어요', '권한 요청 창에서 거부했거나, 노션(또는 기기 설정)이 임베드의 마이크 사용을 막고 있어요. 요청 창이 떴는지 알려주세요.'];
+      return ['bad', '❌ 마이크 사용이 거부됐어요', '브라우저나 기기 설정에서 마이크 권한을 확인해주세요.'];
+    }
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError') return ['warn', '⚠️ 마이크 장치를 찾지 못했어요', '권한 문제는 아니에요. 이 기기에 연결된 마이크가 없어요.'];
+    if (name === 'NotReadableError' || name === 'TrackStartError') return ['warn', '⚠️ 마이크를 열 수 없어요', '다른 앱(줌, 노션 AI 회의록 등)이 마이크를 쓰고 있을 수 있어요.'];
+    if (name === 'SecurityError') return ['bad', '❌ 보안 정책 때문에 차단됐어요', '임베드 환경이 마이크 사용을 허용하지 않아요.'];
+    return ['bad', '❌ 마이크 테스트 실패', name + ': ' + ((err && err.message) || '')];
+  }
+
+  $('micBtn').addEventListener('click', function () {
+    var btn = this;
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+      results.mic = '실패 — 마이크 API 없음';
+      setVerdict('bad', '❌ 이 환경은 마이크 기능 자체를 제공하지 않아요', '앱 안의 브라우저가 마이크 API를 막고 있을 가능성이 커요.');
+      render();
+      return;
+    }
+    btn.disabled = true;
+    setVerdict('', '마이크 권한을 요청하는 중이에요…');
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      runRecording(stream, btn);
+    }).catch(function (err) {
+      var e = explainError(err);
+      results.mic = '실패 — ' + err.name + (err.message ? ' (' + err.message + ')' : '');
+      setVerdict(e[0], e[1], e[2]);
+      btn.disabled = false;
+      render();
+    });
+  });
+
+  function runRecording(stream, btn) {
+    var track = stream.getAudioTracks()[0];
+    var label = (track && track.label) || '이름 없음';
+    var peak = 0;
+    var meter = $('meter');
+    var bar = meter.firstElementChild;
+    var ctx = null, raf = 0;
+    meter.style.display = 'block';
+
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC();
+      var analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      ctx.createMediaStreamSource(stream).connect(analyser);
+      var data = new Uint8Array(analyser.fftSize);
+      (function tick() {
+        analyser.getByteTimeDomainData(data);
+        var max = 0;
+        for (var i = 0; i < data.length; i++) {
+          var v = Math.abs(data[i] - 128) / 128;
+          if (v > max) max = v;
+        }
+        if (max > peak) peak = max;
+        bar.style.width = Math.min(100, Math.round(max * 140)) + '%';
+        raf = requestAnimationFrame(tick);
+      })();
+    } catch (e) {}
+
+    var chunks = [];
+    var rec = null;
+    try {
+      var types = recorderTypes() || [];
+      rec = types.length ? new MediaRecorder(stream, { mimeType: types[0] }) : new MediaRecorder(stream);
+      rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.start(1000);
+    } catch (e) {
+      rec = null;
+    }
+
+    var left = 5;
+    setVerdict('ok', '🎙 녹음 중이에요… 말을 해보세요 (' + left + '초)');
+    var timer = setInterval(function () {
+      left -= 1;
+      if (left > 0) setVerdict('ok', '🎙 녹음 중이에요… 말을 해보세요 (' + left + '초)');
+    }, 1000);
+
+    setTimeout(function () {
+      clearInterval(timer);
+      var finish = function () {
+        cancelAnimationFrame(raf);
+        stream.getTracks().forEach(function (t) { t.stop(); });
+        if (ctx) ctx.close();
+        meter.style.display = 'none';
+        var size = chunks.reduce(function (s, c) { return s + c.size; }, 0);
+        if (chunks.length) {
+          var player = $('player');
+          player.src = URL.createObjectURL(new Blob(chunks, { type: chunks[0].type || 'audio/webm' }));
+          player.style.display = 'block';
+        }
+        var peakPct = Math.round(peak * 100);
+        var recNote = rec ? ('녹음 파일 ' + Math.round(size / 1024) + 'KB') : '녹음 기능(MediaRecorder) 사용 불가';
+        results.mic = '성공 — 장치: ' + label + ', 최대 음량 ' + peakPct + '%, ' + recNote;
+        if (peak < 0.02) {
+          setVerdict('warn', '⚠️ 마이크는 열렸지만 소리가 거의 안 잡혔어요', '말을 하면서 다시 한 번 눌러주세요. (' + recNote + ')');
+        } else if (!rec) {
+          setVerdict('warn', '⚠️ 마이크는 되지만 녹음 파일을 만들 수 없어요', '소리는 잡히지만 이 환경은 녹음 기능을 지원하지 않아요.');
+        } else {
+          setVerdict('ok', '✅ 임베드 안에서 녹음이 돼요', '아래 재생 버튼으로 방금 녹음을 들어보세요. (' + recNote + ')');
+        }
+        btn.disabled = false;
+        render();
+      };
+      if (rec && rec.state !== 'inactive') {
+        rec.onstop = finish;
+        rec.stop();
+      } else {
+        finish();
+      }
+    }, 5000);
+  }
+
+  $('wakeBtn').addEventListener('click', function () {
+    if (!('wakeLock' in navigator)) {
+      results.wakeLock = '지원 안 함';
+      render();
+      return;
+    }
+    navigator.wakeLock.request('screen').then(function (lock) {
+      results.wakeLock = '성공';
+      render();
+      setTimeout(function () { lock.release(); }, 3000);
+    }).catch(function (err) {
+      results.wakeLock = '실패 — ' + err.name;
+      render();
+    });
+  });
+
+  $('copyBtn').addEventListener('click', function () {
+    var ta = $('report');
+    var btn = this;
+    var done = function () { btn.textContent = '복사됨'; setTimeout(function () { btn.textContent = '결과 복사'; }, 1500); };
+    var fallback = function () {
+      ta.focus(); ta.select();
+      try { document.execCommand('copy') ? done() : (btn.textContent = '선택됨 — 직접 복사해주세요'); }
+      catch (e) { btn.textContent = '선택됨 — 직접 복사해주세요'; }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(ta.value).then(done, fallback);
+    } else {
+      fallback();
+    }
+  });
+
+  $('newTab').href = location.href.split('#')[0];
+  collectEnv();
+})();
+</script>
+</body>
+</html>
